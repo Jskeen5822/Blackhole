@@ -43,13 +43,9 @@ vec2 lensWarp(vec2 uv, float strength) {
 
 vec2 tiltedPolar(vec2 uv) {
     vec2 p = uv * 2.0 - 1.0;
-    p = rotate(p, 0.62);
-    p.x *= 1.05;
-    p.y *= 0.42;
-    p.y += p.x * 0.18;
-    float depth = saturate((p.x + 1.2) * 0.4);
-    p.y *= mix(0.45, 1.05, depth);
-    p.x += depth * 0.12;
+    p = rotate(p, 0.18);
+    p.y *= 0.9;
+    p.x *= 1.04;
     float r = length(p);
     float angle = atan(p.y, p.x);
     return vec2(r, angle);
@@ -145,18 +141,18 @@ void main() {
     float stars = starField(uv + orbitA * 0.007 + orbitB * 0.004 - orbitC * 0.003, cycle);
     background += paletteGlow * 0.4 * stars;
 
-    vec2 warped = lensWarp(uv, 0.12 + 0.08 * u_warp);
-    vec2 swirled = swirl(warped, 0.18 + u_warp * 0.4);
+    vec2 warped = mix(uv, lensWarp(uv, 0.06 + 0.04 * u_warp), 0.35);
+    vec2 swirled = swirl(warped, 0.12 + u_warp * 0.3);
     vec2 polar = tiltedPolar(swirled);
     float r = polar.x;
     float angle = polar.y;
-    float viewBias = saturate(0.5 + 0.5 * sin(angle + 0.7));
+    float viewBias = saturate(0.5 + 0.45 * sin(angle + 0.5));
 
-    float photonMask = ringMask(r, 0.18, 0.26, 0.015);
+    float photonMask = ringMask(r, 0.21, 0.29, 0.012);
     float photonFlicker = 0.75 + 0.25 * sin(loopAngle * 3.0 + angle * 2.2) + 0.12 * sin(loopAngle * 5.0);
     vec3 photonRing = paletteGlow * 2.2 * photonMask * photonFlicker * mix(0.7, 1.9, viewBias);
 
-    float diskBand = smoothstep(0.16, 0.22, r) * (1.0 - smoothstep(0.22, 0.9, r));
+    float diskBand = smoothstep(0.22, 0.3, r) * (1.0 - smoothstep(0.3, 0.95, r));
     float diskFlow = 0.6 + 0.4 * sin(angle - loopAngle * 0.8);
     float diskRumple = fbm(vec2(r * 22.0, angle * 5.2) + orbitA * 2.1);
     float diskSpiral = fbm(vec2(r * 15.0, angle * 7.5) + orbitB * 1.7);
@@ -173,15 +169,15 @@ void main() {
     vec3 halo = mix(paletteShadow, paletteBright, 0.3) * haloMask * mix(0.6, 1.2, viewBias);
 
     float jetAngular = pow(abs(sin(angle)), 6.0);
-    float jetCore = smoothstep(0.1, 0.3, r) * (1.0 - smoothstep(0.34, 0.9, r));
+    float jetCore = smoothstep(0.18, 0.35, r) * (1.0 - smoothstep(0.38, 0.95, r));
     float jetNoise = fbm(vec2(angle * 8.5, r * 13.0) + orbitC * 1.9);
     float jetPulse = 0.6 + 0.4 * sin(loopAngle * 4.0 + angle * 4.5);
     vec3 jetColor = mix(paletteMid, paletteGlow, 0.6);
     vec3 jets = jetColor * jetAngular * jetCore * (0.35 + 0.65 * jetNoise) * jetPulse * u_jetIntensity * mix(0.35, 0.95, viewBias);
 
-    vec3 innerGlow = mix(paletteShadow, paletteMid, 0.5) * smoothstep(0.16, 0.23, r) * (1.0 - smoothstep(0.24, 0.32, r));
+    vec3 innerGlow = mix(paletteShadow, paletteMid, 0.5) * smoothstep(0.2, 0.26, r) * (1.0 - smoothstep(0.28, 0.36, r));
 
-    float innerMask = smoothstep(0.1, 0.22, r);
+    float innerMask = smoothstep(0.16, 0.3, r);
     float outerMask = 1.0 - smoothstep(0.9, 1.2, r);
 
     vec3 emission = halo + disk + photonRing + jets + innerGlow * 0.4;
