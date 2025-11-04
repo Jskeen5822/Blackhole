@@ -48,6 +48,7 @@ shaders/
 - A far-side mirage ring is bent upward to emulate lensing; tweak `blackhole.spin` or the `FarDiskBend` modifier in Blender for different wraps.
 - The photon ring is a high-intensity caustic with noise-driven flicker to suggest photon trajectories.
 - The world background mixes a dark nebula gradient with procedural stars for contrast around the silhouette.
+- A volumetric dust envelope and twin relativistic jets wrap the system; adjust their look via the `BH_DustEnvelope_MAT` and `BH_Jet_MAT` materials if you need different colors or scale.
 - For incremental updates, re-run after deleting the previous `Brainrot_` objects inside Blender.
 
 ## Output

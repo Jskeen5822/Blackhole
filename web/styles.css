@@ -1,0 +1,51 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #02030b;
+  overflow: hidden;
+  font-family: "Inter", Arial, sans-serif;
+  color: #d0d3ff;
+}
+
+#blackhole-canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+#controls {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: rgba(6, 8, 24, 0.55);
+  border: 1px solid rgba(68, 86, 255, 0.4);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+}
+
+#controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+#controls input[type="range"] {
+  accent-color: #9ea6ff;
+}
+
+#controls select {
+  background: rgba(12, 15, 38, 0.6);
+  border: 1px solid rgba(103, 120, 255, 0.45);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  color: #e3e6ff;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

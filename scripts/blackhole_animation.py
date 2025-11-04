@@ -85,9 +85,20 @@ class BlackHole:
         event_horizon = self._create_event_horizon()
         photon_ring = self._create_photon_ring()
         near_disk, far_disk = self._create_accretion_disk()
+        dust = self._create_dust_envelope()
+        jet_pos, jet_neg = self._create_relativistic_jets()
         lens = self._create_gravitational_lens()
 
-        for obj in (event_horizon, photon_ring, near_disk, far_disk, lens):
+        for obj in (
+            event_horizon,
+            photon_ring,
+            near_disk,
+            far_disk,
+            dust,
+            jet_pos,
+            jet_neg,
+            lens,
+        ):
             try:
                 self.collection.objects.link(obj)
             except RuntimeError:
@@ -236,6 +247,136 @@ class BlackHole:
         lens.cycles.is_portal = True
         return lens
 
+    def _create_dust_envelope(self) -> bpy.types.Object:
+        bpy.ops.mesh.primitive_torus_add(
+            major_radius=self.settings.radius * 4.0,
+            minor_radius=self.settings.radius * 0.75,
+            major_segments=256,
+            minor_segments=96,
+        )
+        dust = bpy.context.active_object
+        dust.name = "BH_DustEnvelope"
+        dust.display_type = "WIRE"
+        mat = self._ensure_material("BH_DustEnvelope_MAT")
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+
+        output = nodes.new("ShaderNodeOutputMaterial")
+        volume = nodes.new("ShaderNodeVolumePrincipled")
+        volume.inputs["Color"].default_value = (0.55, 0.38, 0.22, 1.0)
+        volume.inputs["Emission Strength"].default_value = 0.35
+        volume.inputs["Emission Color"].default_value = (1.0, 0.75, 0.4, 1.0)
+        volume.inputs["Anisotropy"].default_value = 0.35
+
+        tex_coord = nodes.new("ShaderNodeTexCoord")
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.inputs[3].default_value = (0.0, 0.0, 0.0)
+        mapping.inputs[1].default_value[2] = -self.settings.radius * 0.1
+        scale_vec = nodes.new("ShaderNodeVectorMath")
+        scale_vec.operation = "MULTIPLY"
+        scale_vec.inputs[1].default_value = (0.25, 0.25, 0.6)
+
+        radial_gradient = nodes.new("ShaderNodeTexGradient")
+        radial_gradient.gradient_type = "RADIAL"
+        radial_ramp = nodes.new("ShaderNodeValToRGB")
+        radial_ramp.color_ramp.elements[0].position = 0.0
+        radial_ramp.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
+        radial_ramp.color_ramp.elements[1].position = 0.7
+        radial_ramp.color_ramp.elements[1].color = (0.0, 0.0, 0.0, 1.0)
+
+        noise = nodes.new("ShaderNodeTexNoise")
+        noise.inputs[1].default_value = 9.0
+        noise.inputs[2].default_value = 0.65
+        noise.inputs[3].default_value = 2.2
+        noise_ramp = nodes.new("ShaderNodeValToRGB")
+        noise_ramp.color_ramp.elements[0].position = 0.3
+        noise_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+        noise_ramp.color_ramp.elements[1].position = 0.85
+        noise_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+
+        density_mix = nodes.new("ShaderNodeMixRGB")
+        density_mix.blend_type = "MULTIPLY"
+        density_mix.inputs[0].default_value = 0.7
+
+        density_scale = nodes.new("ShaderNodeMath")
+        density_scale.operation = "MULTIPLY"
+        density_scale.inputs[1].default_value = 0.45
+
+        links.new(tex_coord.outputs["Object"], mapping.inputs[0])
+        links.new(mapping.outputs[0], scale_vec.inputs[0])
+        links.new(scale_vec.outputs[0], radial_gradient.inputs[0])
+        links.new(scale_vec.outputs[0], noise.inputs[0])
+        links.new(radial_gradient.outputs[0], radial_ramp.inputs[0])
+        links.new(noise.outputs[1], noise_ramp.inputs[0])
+        links.new(radial_ramp.outputs[0], density_mix.inputs[1])
+        links.new(noise_ramp.outputs[0], density_mix.inputs[2])
+        links.new(density_mix.outputs[0], density_scale.inputs[0])
+        links.new(density_scale.outputs[0], volume.inputs["Density"])
+        links.new(volume.outputs[0], output.inputs[1])
+
+        dust.data.materials.clear()
+        dust.data.materials.append(mat)
+        return dust
+
+    def _create_relativistic_jets(self) -> tuple[bpy.types.Object, bpy.types.Object]:
+        bpy.ops.mesh.primitive_cone_add(
+            radius1=self.settings.radius * 0.35,
+            radius2=self.settings.radius * 0.025,
+            depth=self.settings.radius * 10.0,
+            location=(0.0, 0.0, self.settings.radius * 3.0),
+        )
+        jet_pos = bpy.context.active_object
+        jet_pos.name = "BH_Jet_Pos"
+        mat = self._ensure_material("BH_Jet_MAT")
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+
+        output = nodes.new("ShaderNodeOutputMaterial")
+        emission = nodes.new("ShaderNodeEmission")
+        emission.inputs[1].default_value = 28.0
+
+        tex_coord = nodes.new("ShaderNodeTexCoord")
+        separate = nodes.new("ShaderNodeSeparateXYZ")
+        invert = nodes.new("ShaderNodeMath")
+        invert.operation = "MULTIPLY"
+        invert.inputs[1].default_value = -1.0
+        color_ramp = nodes.new("ShaderNodeValToRGB")
+        color_ramp.color_ramp.elements[0].position = 0.0
+        color_ramp.color_ramp.elements[0].color = (0.1, 0.3, 0.9, 1.0)
+        color_ramp.color_ramp.elements[1].position = 1.0
+        color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+
+        noise = nodes.new("ShaderNodeTexNoise")
+        noise.inputs[1].default_value = 15.0
+        noise.inputs[2].default_value = 0.4
+        noise.inputs[3].default_value = 3.0
+        noise_mix = nodes.new("ShaderNodeMixRGB")
+        noise_mix.blend_type = "MULTIPLY"
+        noise_mix.inputs[0].default_value = 0.5
+
+        links.new(tex_coord.outputs["Object"], separate.inputs[0])
+        links.new(separate.outputs[2], invert.inputs[0])
+        links.new(invert.outputs[0], color_ramp.inputs[0])
+        links.new(tex_coord.outputs["Object"], noise.inputs[0])
+        links.new(color_ramp.outputs[0], noise_mix.inputs[1])
+        links.new(noise.outputs[1], noise_mix.inputs[2])
+        links.new(noise_mix.outputs[0], emission.inputs[0])
+        links.new(emission.outputs[0], output.inputs[0])
+
+        jet_pos.data.materials.clear()
+        jet_pos.data.materials.append(mat)
+
+        jet_neg = jet_pos.copy()
+        jet_neg.data = jet_pos.data.copy()
+        jet_neg.name = "BH_Jet_Neg"
+        jet_neg.rotation_euler = (math.pi, 0.0, 0.0)
+        jet_neg.location = (0.0, 0.0, -self.settings.radius * 3.0)
+        bpy.context.scene.collection.objects.link(jet_neg)
+
+        return jet_pos, jet_neg
+
     def _create_disk_material(self, name: str, emission_multiplier: float) -> bpy.types.Material:
         mat = self._ensure_material(name)
         nodes = mat.node_tree.nodes
@@ -257,15 +398,15 @@ class BlackHole:
         gradient.gradient_type = "RADIAL"
         radial_ramp = nodes.new("ShaderNodeValToRGB")
         radial_ramp.color_ramp.elements[0].position = 0.0
-        radial_ramp.color_ramp.elements[0].color = (0.02, 0.01, 0.01, 1.0)
+        radial_ramp.color_ramp.elements[0].color = (0.08, 0.04, 0.02, 1.0)
         radial_ramp.color_ramp.elements[1].position = 0.95
-        radial_ramp.color_ramp.elements[1].color = (1.0, 0.92, 0.65, 1.0)
+        radial_ramp.color_ramp.elements[1].color = (1.0, 0.78, 0.4, 1.0)
         inner_element = radial_ramp.color_ramp.elements.new(0.18)
-        inner_element.color = (0.85, 0.3, 0.06, 1.0)
+        inner_element.color = (0.65, 0.24, 0.05, 1.0)
         mid_element = radial_ramp.color_ramp.elements.new(0.45)
-        mid_element.color = (1.0, 0.6, 0.2, 1.0)
+        mid_element.color = (0.95, 0.55, 0.2, 1.0)
         highlight_element = radial_ramp.color_ramp.elements.new(0.7)
-        highlight_element.color = (1.0, 0.85, 0.45, 1.0)
+        highlight_element.color = (1.0, 0.9, 0.6, 1.0)
 
         noise = nodes.new("ShaderNodeTexNoise")
         noise.inputs[1].default_value = 55.0
@@ -345,7 +486,7 @@ class CameraPath:
         curve.data.resolution_u = 64
         curve.data.use_path = True
         curve.data.path_duration = self.settings.path_length
-        curve.rotation_euler = (math.radians(65.0), 0.0, math.radians(25.0))
+        curve.rotation_euler = (math.radians(38.0), 0.0, math.radians(42.0))
         self.collection.objects.link(curve)
         return curve
 
