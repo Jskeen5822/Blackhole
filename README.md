@@ -41,6 +41,13 @@ shaders/
 - Leave `assets/input_brainrot` empty if you only want the black hole; no ingestion rig will be created.
 - After each run a preview still is written to `output/blackhole_preview.png` (set `render.preview_still_path` to null/empty to skip).
 - Drop new files into `assets/input_brainrot`, rerun the script; keyframes re-sync automatically.
+
+## Visual Notes
+
+- The accretion disk shader now layers radial temperature gradients with turbulent streaking to mimic relativistic shear.
+- A far-side mirage ring is bent upward to emulate lensing; tweak `blackhole.spin` or the `FarDiskBend` modifier in Blender for different wraps.
+- The photon ring is a high-intensity caustic with noise-driven flicker to suggest photon trajectories.
+- The world background mixes a dark nebula gradient with procedural stars for contrast around the silhouette.
 - For incremental updates, re-run after deleting the previous `Brainrot_` objects inside Blender.
 
 ## Output

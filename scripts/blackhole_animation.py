@@ -84,11 +84,14 @@ class BlackHole:
     def build(self) -> None:
         event_horizon = self._create_event_horizon()
         photon_ring = self._create_photon_ring()
-        disk = self._create_accretion_disk()
+        near_disk, far_disk = self._create_accretion_disk()
         lens = self._create_gravitational_lens()
 
-        for obj in (event_horizon, photon_ring, disk, lens):
-            self.collection.objects.link(obj)
+        for obj in (event_horizon, photon_ring, near_disk, far_disk, lens):
+            try:
+                self.collection.objects.link(obj)
+            except RuntimeError:
+                pass
 
     def _create_event_horizon(self) -> bpy.types.Object:
         bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=self.settings.radius)
@@ -101,18 +104,33 @@ class BlackHole:
         nodes.clear()
         output = nodes.new("ShaderNodeOutputMaterial")
         emission = nodes.new("ShaderNodeEmission")
-        emission.inputs[0].default_value = (0.01, 0.01, 0.01, 1.0)
+        emission.inputs[0].default_value = (0.0, 0.0, 0.0, 1.0)
         emission.inputs[1].default_value = 0.02
-        links.new(emission.outputs[0], output.inputs[0])
+        layer_weight = nodes.new("ShaderNodeLayerWeight")
+        layer_weight.inputs[0].default_value = 0.4
+        rim_ramp = nodes.new("ShaderNodeValToRGB")
+        rim_ramp.color_ramp.elements[0].position = 0.0
+        rim_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+        rim_ramp.color_ramp.elements[1].position = 0.25
+        rim_ramp.color_ramp.elements[1].color = (0.15, 0.3, 0.6, 1.0)
+        rim_emission = nodes.new("ShaderNodeEmission")
+        rim_emission.inputs[1].default_value = 1.2
+        mix_shader = nodes.new("ShaderNodeAddShader")
+        links.new(layer_weight.outputs[1], rim_ramp.inputs[0])
+        links.new(rim_ramp.outputs[0], rim_emission.inputs[0])
+        links.new(emission.outputs[0], mix_shader.inputs[0])
+        links.new(rim_emission.outputs[0], mix_shader.inputs[1])
+        links.new(mix_shader.outputs[0], output.inputs[0])
         sphere.data.materials.append(mat)
+        bpy.ops.object.shade_smooth()
         return sphere
 
     def _create_photon_ring(self) -> bpy.types.Object:
         bpy.ops.mesh.primitive_torus_add(
             major_radius=self.settings.radius * 1.15,
-            minor_radius=self.settings.radius * 0.12,
-            major_segments=256,
-            minor_segments=32,
+            minor_radius=self.settings.radius * 0.06,
+            major_segments=512,
+            minor_segments=64,
         )
         torus = bpy.context.active_object
         torus.name = "BH_PhotonRing"
@@ -122,61 +140,75 @@ class BlackHole:
         nodes.clear()
         output = nodes.new("ShaderNodeOutputMaterial")
         emission = nodes.new("ShaderNodeEmission")
-        emission.inputs[1].default_value = 15.0
-        color_ramp = nodes.new("ShaderNodeValToRGB")
-        color_ramp.color_ramp.interpolation = "EASE"
-        color_ramp.color_ramp.elements[0].position = 0.2
-        color_ramp.color_ramp.elements[0].color = (*self.settings.disk_color, 1.0)
-        color_ramp.color_ramp.elements[1].position = 1.0
-        color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
-        texture = nodes.new("ShaderNodeTexNoise")
-        texture.inputs[1].default_value = 20.0
-        texture.inputs[2].default_value = 0.3
-        mapping = nodes.new("ShaderNodeMapping")
-        mapping.inputs[3].default_value[2] = self.settings.spin * 5.0
+        emission.inputs[1].default_value = 65.0
         tex_coord = nodes.new("ShaderNodeTexCoord")
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.inputs[3].default_value[2] = self.settings.spin * 7.5
+        noise = nodes.new("ShaderNodeTexNoise")
+        noise.inputs[1].default_value = 45.0
+        noise.inputs[2].default_value = 0.25
+        noise.inputs[3].default_value = 0.6
+        color_ramp = nodes.new("ShaderNodeValToRGB")
+        color_ramp.color_ramp.elements[0].position = 0.35
+        color_ramp.color_ramp.elements[0].color = (*self.settings.disk_color, 1.0)
+        color_ramp.color_ramp.elements[1].position = 0.9
+        color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 0.9, 1.0)
+        glow_ramp = nodes.new("ShaderNodeValToRGB")
+        glow_ramp.color_ramp.elements[0].position = 0.0
+        glow_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+        glow_ramp.color_ramp.elements[1].position = 0.6
+        glow_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+        multiply = nodes.new("ShaderNodeMixRGB")
+        multiply.blend_type = "MULTIPLY"
+        multiply.inputs[0].default_value = 0.65
         links.new(tex_coord.outputs["Object"], mapping.inputs[0])
-        links.new(mapping.outputs[0], texture.inputs[0])
-        links.new(texture.outputs[1], color_ramp.inputs[0])
-        links.new(color_ramp.outputs[0], emission.inputs[0])
+        links.new(mapping.outputs[0], noise.inputs[0])
+        links.new(noise.outputs[1], color_ramp.inputs[0])
+        links.new(noise.outputs[0], glow_ramp.inputs[0])
+        links.new(color_ramp.outputs[0], multiply.inputs[1])
+        links.new(glow_ramp.outputs[0], multiply.inputs[2])
+        links.new(multiply.outputs[0], emission.inputs[0])
         links.new(emission.outputs[0], output.inputs[0])
         torus.data.materials.clear()
         torus.data.materials.append(mat)
+        bpy.ops.object.shade_smooth()
         return torus
 
-    def _create_accretion_disk(self) -> bpy.types.Object:
-        bpy.ops.mesh.primitive_cylinder_add(radius=self.settings.radius * 3.0, depth=self.settings.radius * 0.1)
-        disk = bpy.context.active_object
-        disk.name = "BH_AccretionDisk"
-        disk.location.z = 0.0
-        disk.scale.z = 0.1
-        mat = self._ensure_material("BH_AccretionDisk_MAT")
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
-        nodes.clear()
-        output = nodes.new("ShaderNodeOutputMaterial")
-        emission = nodes.new("ShaderNodeEmission")
-        emission.inputs[1].default_value = self.settings.disk_intensity
-        color_ramp = nodes.new("ShaderNodeValToRGB")
-        color_ramp.color_ramp.elements[0].position = 0.0
-        color_ramp.color_ramp.elements[0].color = (0.05, 0.05, 0.05, 1.0)
-        color_ramp.color_ramp.elements[1].position = 0.4
-        color_ramp.color_ramp.elements[1].color = (*self.settings.disk_color, 1.0)
-        color_ramp.color_ramp.elements.new(0.8)
-        color_ramp.color_ramp.elements[2].color = (1.0, 0.95, 0.7, 1.0)
-        gradient = nodes.new("ShaderNodeTexGradient")
-        gradient.gradient_type = "QUADRATIC"
-        mapping = nodes.new("ShaderNodeMapping")
-        mapping.inputs[3].default_value[2] = self.settings.spin * 2.5
-        tex_coord = nodes.new("ShaderNodeTexCoord")
-        links.new(tex_coord.outputs["Object"], mapping.inputs[0])
-        links.new(mapping.outputs[0], gradient.inputs[0])
-        links.new(gradient.outputs[0], color_ramp.inputs[0])
-        links.new(color_ramp.outputs[0], emission.inputs[0])
-        links.new(emission.outputs[0], output.inputs[0])
-        disk.data.materials.clear()
-        disk.data.materials.append(mat)
-        return disk
+    def _create_accretion_disk(self) -> tuple[bpy.types.Object, bpy.types.Object]:
+        bpy.ops.mesh.primitive_torus_add(
+            major_radius=self.settings.radius * 3.2,
+            minor_radius=self.settings.radius * 0.18,
+            major_segments=512,
+            minor_segments=48,
+        )
+        disk_near = bpy.context.active_object
+        disk_near.name = "BH_AccretionDisk"
+        disk_near.scale.z = 0.25
+        bpy.ops.object.shade_smooth()
+        mat_near = self._create_disk_material("BH_AccretionDisk_MAT", emission_multiplier=1.0)
+        disk_near.data.materials.clear()
+        disk_near.data.materials.append(mat_near)
+
+        disk_far = disk_near.copy()
+        disk_far.data = disk_near.data.copy()
+        disk_far.name = "BH_AccretionDisk_Far"
+        disk_far.scale = disk_near.scale.copy()
+        disk_far.rotation_euler = (math.radians(178.0), 0.0, 0.0)
+        disk_far.location.z = self.settings.radius * 0.45
+        bpy.context.scene.collection.objects.link(disk_far)
+        mat_far = self._create_disk_material("BH_AccretionDisk_Far_MAT", emission_multiplier=0.65)
+        disk_far.data.materials.clear()
+        disk_far.data.materials.append(mat_far)
+        bend = disk_far.modifiers.new("FarDiskBend", type="SIMPLE_DEFORM")
+        bend.deform_method = "BEND"
+        bend.deform_axis = "X"
+        bend.angle = math.radians(165.0)
+        taper = disk_far.modifiers.new("FarDiskTaper", type="SIMPLE_DEFORM")
+        taper.deform_method = "TAPER"
+        taper.deform_axis = "Z"
+        taper.factor = -0.35
+
+        return disk_near, disk_far
 
     def _create_gravitational_lens(self) -> bpy.types.Object:
         bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=self.settings.radius * 2.4)
@@ -203,6 +235,70 @@ class BlackHole:
         lens.data.materials.append(mat)
         lens.cycles.is_portal = True
         return lens
+
+    def _create_disk_material(self, name: str, emission_multiplier: float) -> bpy.types.Material:
+        mat = self._ensure_material(name)
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+
+        output = nodes.new("ShaderNodeOutputMaterial")
+        emission = nodes.new("ShaderNodeEmission")
+        emission.inputs[1].default_value = self.settings.disk_intensity * emission_multiplier
+
+        tex_coord = nodes.new("ShaderNodeTexCoord")
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.inputs[3].default_value[2] = self.settings.spin * 1.5
+        stretch = nodes.new("ShaderNodeVectorMath")
+        stretch.operation = "MULTIPLY"
+        stretch.inputs[1].default_value = (1.0, 0.18, 1.0)
+
+        gradient = nodes.new("ShaderNodeTexGradient")
+        gradient.gradient_type = "RADIAL"
+        radial_ramp = nodes.new("ShaderNodeValToRGB")
+        radial_ramp.color_ramp.elements[0].position = 0.0
+        radial_ramp.color_ramp.elements[0].color = (0.02, 0.01, 0.01, 1.0)
+        radial_ramp.color_ramp.elements[1].position = 0.95
+        radial_ramp.color_ramp.elements[1].color = (1.0, 0.92, 0.65, 1.0)
+        inner_element = radial_ramp.color_ramp.elements.new(0.18)
+        inner_element.color = (0.85, 0.3, 0.06, 1.0)
+        mid_element = radial_ramp.color_ramp.elements.new(0.45)
+        mid_element.color = (1.0, 0.6, 0.2, 1.0)
+        highlight_element = radial_ramp.color_ramp.elements.new(0.7)
+        highlight_element.color = (1.0, 0.85, 0.45, 1.0)
+
+        noise = nodes.new("ShaderNodeTexNoise")
+        noise.inputs[1].default_value = 55.0
+        noise.inputs[2].default_value = 0.45
+        noise.inputs[3].default_value = 1.25 * max(self.settings.spin, 0.1)
+        noise_ramp = nodes.new("ShaderNodeValToRGB")
+        noise_ramp.color_ramp.elements[0].position = 0.25
+        noise_ramp.color_ramp.elements[0].color = (0.15, 0.08, 0.05, 1.0)
+        noise_ramp.color_ramp.elements[1].position = 0.75
+        noise_ramp.color_ramp.elements[1].color = (1.0, 0.95, 0.9, 1.0)
+
+        streak_mix = nodes.new("ShaderNodeMixRGB")
+        streak_mix.blend_type = "OVERLAY"
+        streak_mix.inputs[0].default_value = 0.65
+
+        glare_mix = nodes.new("ShaderNodeMixRGB")
+        glare_mix.blend_type = "ADD"
+        glare_mix.inputs[0].default_value = 0.4
+        glare_mix.inputs[2].default_value = (1.0, 0.95, 0.8, 1.0)
+
+        links.new(tex_coord.outputs["Object"], mapping.inputs[0])
+        links.new(mapping.outputs[0], stretch.inputs[0])
+        links.new(stretch.outputs[0], gradient.inputs[0])
+        links.new(gradient.outputs[0], radial_ramp.inputs[0])
+        links.new(stretch.outputs[0], noise.inputs[0])
+        links.new(noise.outputs[1], noise_ramp.inputs[0])
+        links.new(radial_ramp.outputs[0], streak_mix.inputs[1])
+        links.new(noise_ramp.outputs[0], streak_mix.inputs[2])
+        links.new(streak_mix.outputs[0], glare_mix.inputs[1])
+        links.new(glare_mix.outputs[0], emission.inputs[0])
+        links.new(emission.outputs[0], output.inputs[0])
+
+        return mat
 
     @staticmethod
     def _ensure_collection(name: str) -> bpy.types.Collection:
@@ -236,9 +332,10 @@ class CameraPath:
         self.collection = BlackHole._ensure_collection("Camera_Rig")
 
     def build(self) -> bpy.types.Object:
+        target = self._target_empty()
         path = self._create_path()
-        camera = self._create_camera()
-        self._animate_path(camera, path)
+        camera = self._create_camera(target)
+        self._animate_path(camera, path, target)
         return camera
 
     def _create_path(self) -> bpy.types.Object:
@@ -248,27 +345,25 @@ class CameraPath:
         curve.data.resolution_u = 64
         curve.data.use_path = True
         curve.data.path_duration = self.settings.path_length
+        curve.rotation_euler = (math.radians(65.0), 0.0, math.radians(25.0))
         self.collection.objects.link(curve)
         return curve
 
-    def _create_camera(self) -> bpy.types.Object:
-        if not bpy.data.cameras:
-            bpy.ops.object.camera_add()
-        else:
-            bpy.ops.object.camera_add()
+    def _create_camera(self, target: bpy.types.Object) -> bpy.types.Object:
+        bpy.ops.object.camera_add()
         camera = bpy.context.active_object
         camera.name = "BlackHoleCamera"
         cam_data = camera.data
         cam_data.lens = self.settings.focal_length
         if self.settings.depth_of_field:
             cam_data.dof.use_dof = True
-            cam_data.dof.focus_distance = self.orbit_radius * 1.1
+            cam_data.dof.focus_object = target
             cam_data.dof.aperture_fstop = self.settings.aperture_fstop
         self.collection.objects.link(camera)
         bpy.context.scene.camera = camera
         return camera
 
-    def _animate_path(self, camera: bpy.types.Object, path: bpy.types.Object) -> None:
+    def _animate_path(self, camera: bpy.types.Object, path: bpy.types.Object, target: bpy.types.Object) -> None:
         constraint = camera.constraints.new("FOLLOW_PATH")
         constraint.target = path
         constraint.use_fixed_location = True
@@ -276,11 +371,11 @@ class CameraPath:
         constraint.up_axis = "UP_Z"
 
         track_to = camera.constraints.new(type="TRACK_TO")
-        track_to.target = self._target_empty()
+        track_to.target = target
         track_to.track_axis = "TRACK_NEGATIVE_Z"
         track_to.up_axis = "UP_Y"
 
-        camera.location.z = self.orbit_radius * 0.25
+        camera.location.z = self.orbit_radius * 0.3
 
         constraint.offset_factor = 0.0
         constraint.keyframe_insert(data_path="offset_factor", frame=self.frame_start)
@@ -295,6 +390,7 @@ class CameraPath:
             target = bpy.context.active_object
             target.name = target_name
             target.location = (0.0, 0.0, 0.0)
+            target.empty_display_size = self.orbit_radius * 0.2
             self.collection.objects.link(target)
         return target
 
@@ -552,21 +648,52 @@ class BlackHoleScene:
         links = world.node_tree.links
         nodes.clear()
         background = nodes.new("ShaderNodeBackground")
-        background.inputs[0].default_value = (0.02, 0.02, 0.05, 1.0)
-        background.inputs[1].default_value = 0.3
-        noise = nodes.new("ShaderNodeTexNoise")
-        noise.inputs[1].default_value = 5.0
-        color_ramp = nodes.new("ShaderNodeValToRGB")
-        color_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
-        color_ramp.color_ramp.elements[1].color = (0.4, 0.4, 0.6, 1.0)
-        mapping = nodes.new("ShaderNodeMapping")
-        mapping.inputs[3].default_value[2] = 0.5
-        tex_coord = nodes.new("ShaderNodeTexCoord")
+        background.inputs[1].default_value = 1.0
         output = nodes.new("ShaderNodeOutputWorld")
+
+        tex_coord = nodes.new("ShaderNodeTexCoord")
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.inputs[3].default_value = (0.0, -0.35, 0.0)
+
+        nebula_noise = nodes.new("ShaderNodeTexNoise")
+        nebula_noise.inputs[1].default_value = 8.0
+        nebula_noise.inputs[2].default_value = 0.7
+        nebula_noise.inputs[3].default_value = 0.4
+        nebula_ramp = nodes.new("ShaderNodeValToRGB")
+        nebula_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+        nebula_ramp.color_ramp.elements[1].color = (0.05, 0.1, 0.22, 1.0)
+        nebula_mid = nebula_ramp.color_ramp.elements.new(0.6)
+        nebula_mid.color = (0.12, 0.2, 0.45, 1.0)
+
+        star_voronoi = nodes.new("ShaderNodeTexVoronoi")
+        star_voronoi.feature = "SMOOTH_F1"
+        star_voronoi.distance = "EUCLIDEAN"
+        star_voronoi.inputs[2].default_value = 180.0
+        star_voronoi.inputs[3].default_value = 1.0
+        star_ramp = nodes.new("ShaderNodeValToRGB")
+        star_ramp.color_ramp.elements[0].position = 0.96
+        star_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+        star_ramp.color_ramp.elements[1].position = 1.0
+        star_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+
+        nebula_mix = nodes.new("ShaderNodeMixRGB")
+        nebula_mix.inputs[0].default_value = 0.75
+        nebula_mix.inputs[1].default_value = (0.0, 0.0, 0.0, 1.0)
+
+        star_mix = nodes.new("ShaderNodeMixRGB")
+        star_mix.blend_type = "ADD"
+        star_mix.inputs[0].default_value = 0.8
+        star_mix.inputs[1].default_value = (0.01, 0.02, 0.04, 1.0)
+
         links.new(tex_coord.outputs["Generated"], mapping.inputs[0])
-        links.new(mapping.outputs[0], noise.inputs[0])
-        links.new(noise.outputs[1], color_ramp.inputs[0])
-        links.new(color_ramp.outputs[0], background.inputs[0])
+        links.new(mapping.outputs[0], nebula_noise.inputs[0])
+        links.new(nebula_noise.outputs[1], nebula_ramp.inputs[0])
+        links.new(mapping.outputs[0], star_voronoi.inputs[0])
+        links.new(nebula_ramp.outputs[0], nebula_mix.inputs[2])
+        links.new(nebula_mix.outputs[0], star_mix.inputs[1])
+        links.new(star_voronoi.outputs[0], star_ramp.inputs[0])
+        links.new(star_ramp.outputs[0], star_mix.inputs[2])
+        links.new(star_mix.outputs[0], background.inputs[0])
         links.new(background.outputs[0], output.inputs[0])
 
     def _render_preview_if_requested(self) -> None:
