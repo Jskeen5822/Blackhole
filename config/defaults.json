@@ -1,0 +1,28 @@
+{
+  "blackhole": {
+    "mass": 6.5,
+    "spin": 0.94,
+    "radius": 8.0,
+    "disk_color": [1.0, 0.6, 0.2],
+    "disk_intensity": 7.5,
+    "ingestion_speed": 1.2,
+    "stretch_factor": 3.5
+  },
+  "camera": {
+    "path_length": 360,
+    "focal_length": 80.0,
+    "depth_of_field": true,
+    "aperture_fstop": 1.4
+  },
+  "render": {
+    "resolution_x": 1920,
+    "resolution_y": 1080,
+    "frame_rate": 30,
+    "frame_start": 1,
+    "frame_end": 450,
+    "output_path": "//output/blackhole_anim.mp4",
+    "samples": 64,
+    "preview_still_path": "//output/blackhole_preview.png"
+  },
+  "images_dir": "../assets/input_brainrot"
+}
