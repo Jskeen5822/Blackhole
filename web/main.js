@@ -22,6 +22,85 @@ function loadTexture(loader, path) {
   });
 }
 
+function createFallbackPalette() {
+  const data = new Uint8Array([
+    5, 3, 12,
+    12, 6, 20,
+    42, 20, 70,
+    160, 120, 200,
+  ]);
+  const texture = new THREE.DataTexture(data, 2, 2, THREE.RGBFormat);
+  texture.needsUpdate = true;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  return texture;
+}
+
+function createCombinedPalette(textures) {
+  if (textures.length === 0) {
+    return null;
+  }
+
+  const width = 256;
+  const height = 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    return null;
+  }
+  ctx.imageSmoothingEnabled = true;
+
+  const accum = new Float32Array(width * 3);
+  let usableCount = 0;
+
+  textures.forEach((texture) => {
+    const image = texture.image;
+    if (!image) {
+      return;
+    }
+
+    try {
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(image, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      for (let i = 0; i < width; i += 1) {
+        const idx = i * 4;
+        accum[i * 3 + 0] += data[idx + 0] / 255;
+        accum[i * 3 + 1] += data[idx + 1] / 255;
+        accum[i * 3 + 2] += data[idx + 2] / 255;
+      }
+      usableCount += 1;
+    } catch (error) {
+      console.warn("Unable to read palette texture", error);
+    }
+  });
+
+  if (usableCount === 0) {
+    return null;
+  }
+
+  const output = new Uint8Array(width * 3);
+  for (let i = 0; i < width; i += 1) {
+    const r = accum[i * 3 + 0] / usableCount;
+    const g = accum[i * 3 + 1] / usableCount;
+    const b = accum[i * 3 + 2] / usableCount;
+    output[i * 3 + 0] = Math.max(0, Math.min(255, Math.round(r * 255)));
+    output[i * 3 + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+    output[i * 3 + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+  }
+
+  const dataTexture = new THREE.DataTexture(output, width, 1, THREE.RGBFormat);
+  dataTexture.needsUpdate = true;
+  dataTexture.minFilter = THREE.LinearFilter;
+  dataTexture.magFilter = THREE.LinearFilter;
+  dataTexture.wrapS = dataTexture.wrapT = THREE.ClampToEdgeWrapping;
+  return dataTexture;
+}
+
 async function init() {
   const [vertexShader, fragmentShader] = await Promise.all([
     loadShader("shaders/fullscreen.vert.glsl"),
@@ -31,28 +110,31 @@ async function init() {
   const textureLoader = new THREE.TextureLoader();
 
   const textureCandidates = [
-    { label: "Default Palette", path: "assets/textures/blackhole_reference.jpg" },
-    { label: "Ref Image 1", path: "assets/textures/Screenshot 2025-11-04 163420.png" },
-    { label: "Ref Image 2", path: "assets/textures/Screenshot 2025-11-04 163433.png" },
-    { label: "Ref Image 3", path: "assets/textures/Screenshot 2025-11-04 163452.png" },
+    "assets/textures/blackhole_reference.jpg",
+    "assets/textures/Screenshot 2025-11-04 163420.png",
+    "assets/textures/Screenshot 2025-11-04 163433.png",
+    "assets/textures/Screenshot 2025-11-04 163452.png",
+    "assets/textures/Screenshot 2025-11-04 192334.png",
+    "assets/textures/Screenshot 2025-11-04 192344.png",
+    "assets/textures/Screenshot 2025-11-04 192354.png",
+    "assets/textures/Screenshot 2025-11-04 192405.png",
   ];
 
   const loadedTextures = [];
-  for (const candidate of textureCandidates) {
+  for (const path of textureCandidates) {
     try {
-      const texture = await loadTexture(textureLoader, candidate.path);
+      const texture = await loadTexture(textureLoader, path);
       texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
       texture.minFilter = THREE.LinearFilter;
-      loadedTextures.push({ ...candidate, texture });
-      console.info(`Loaded palette texture from ${candidate.path}`);
+      loadedTextures.push(texture);
+      console.info(`Loaded palette texture from ${path}`);
     } catch (error) {
-      console.warn(`Unable to load ${candidate.path}`, error);
+      console.warn(`Unable to load ${path}`, error);
     }
   }
 
   if (loadedTextures.length === 0) {
     console.warn("No reference textures available; using fallback palette");
-    const fallbackSize = 4;
     const data = new Uint8Array([
       5, 3, 12,
       12, 6, 20,
@@ -61,17 +143,22 @@ async function init() {
     ]);
     const fallback = new THREE.DataTexture(data, 2, 2, THREE.RGBFormat);
     fallback.needsUpdate = true;
-    loadedTextures.push({ label: "Procedural", path: "fallback", texture: fallback });
+    loadedTextures.push(fallback);
+  }
+
+  let combinedPalette = createCombinedPalette(loadedTextures);
+  if (!combinedPalette) {
+    combinedPalette = createFallbackPalette();
   }
 
   const uniforms = {
     u_time: { value: 0 },
     u_cycle: { value: 0 },
     u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-    u_baseTexture: { value: loadedTextures[0].texture },
-    u_acceleration: { value: 1 },
-    u_warp: { value: 0.75 },
-    u_jetIntensity: { value: 1.0 },
+    u_baseTexture: { value: combinedPalette },
+    u_acceleration: { value: 1.2 },
+    u_warp: { value: 0.85 },
+    u_jetIntensity: { value: 1.05 },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -85,44 +172,6 @@ async function init() {
   const mesh = new THREE.Mesh(geometry, material);
   scene.add(mesh);
 
-  const controls = {
-    speed: document.getElementById("speed"),
-    warp: document.getElementById("warp"),
-    jet: document.getElementById("jet"),
-    palette: document.getElementById("palette"),
-  };
-
-  controls.palette.innerHTML = "";
-  loadedTextures.forEach((candidate, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = candidate.label;
-    controls.palette.appendChild(option);
-  });
-  controls.palette.value = "0";
-
-  controls.speed.addEventListener("input", () => {
-    uniforms.u_acceleration.value = parseFloat(controls.speed.value);
-  });
-
-  controls.warp.addEventListener("input", () => {
-    uniforms.u_warp.value = parseFloat(controls.warp.value);
-  });
-
-  controls.jet.addEventListener("input", () => {
-    uniforms.u_jetIntensity.value = parseFloat(controls.jet.value);
-  });
-
-  controls.palette.addEventListener("change", () => {
-    const index = parseInt(controls.palette.value, 10);
-    const selected = loadedTextures[index];
-    if (selected) {
-      uniforms.u_baseTexture.value = selected.texture;
-      material.uniforms.u_baseTexture.value = selected.texture;
-      console.info(`Switched palette to ${selected.path}`);
-    }
-  });
-
   function onResize() {
     const { innerWidth, innerHeight } = window;
     renderer.setSize(innerWidth, innerHeight);
@@ -131,7 +180,7 @@ async function init() {
 
   window.addEventListener("resize", onResize);
 
-  const LOOP_DURATION = 18.0; // seconds for a slower seamless cycle
+  const LOOP_DURATION = 13.5; // faster seamless cycle for default state
   const clock = new THREE.Clock();
 
   function animate() {

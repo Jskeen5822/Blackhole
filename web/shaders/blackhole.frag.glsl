@@ -118,6 +118,10 @@ vec3 samplePalette(sampler2D tex, float t) {
     return accum / weight;
 }
 
+vec3 sampleCombinedPalette(float t) {
+    return samplePalette(u_baseTexture, t);
+}
+
 void main() {
     float loopAngle = u_time;
     float cycle = u_cycle;
@@ -127,19 +131,31 @@ void main() {
     vec2 orbitA = vec2(cos(loopAngle), sin(loopAngle));
     vec2 orbitB = vec2(cos(loopAngle * 0.5 + 1.2), sin(loopAngle * 0.5 + 1.2));
     vec2 orbitC = vec2(cos(loopAngle * 0.8 - 0.9), sin(loopAngle * 0.8 - 0.9));
-    float speedInfluence = mix(0.75, 1.35, saturate(u_acceleration * 0.4));
+    float speedInfluence = mix(0.85, 1.55, saturate(u_acceleration * 0.45));
 
-    vec3 paletteShadow = samplePalette(u_baseTexture, 0.05);
-    vec3 paletteMid = samplePalette(u_baseTexture, 0.3);
-    vec3 paletteBright = samplePalette(u_baseTexture, 0.72);
-    vec3 paletteGlow = samplePalette(u_baseTexture, 0.88);
+    vec3 paletteShadow = sampleCombinedPalette(0.05);
+    vec3 paletteMid = sampleCombinedPalette(0.3);
+    vec3 paletteBright = sampleCombinedPalette(0.72);
+    vec3 paletteGlow = sampleCombinedPalette(0.88);
 
-    vec3 gradBg = mix(paletteShadow * 0.35, paletteMid * 0.4, saturate(centered.y * 0.6 + 0.5));
-    vec3 background = gradBg;
-    float bgNoise = fbm(uv * 14.0 + orbitB * 1.6 + orbitC * 0.7);
-    background += paletteShadow * 0.25 * bgNoise + paletteMid * 0.08 * bgNoise;
+    vec3 background = paletteShadow * 0.02 + paletteMid * 0.04;
     float stars = starField(uv + orbitA * 0.007 + orbitB * 0.004 - orbitC * 0.003, cycle);
-    background += paletteGlow * 0.4 * stars;
+    float denseStars = starField(rotate(uv * 1.6 - orbitB * 0.02, 0.28) + orbitA * 0.021, cycle * 1.3 + 0.17);
+    float sparkling = starField(rotate(uv * 2.3 + orbitC * 0.031, -0.41), cycle * 1.9 + 0.62);
+    vec3 starTint = mix(paletteBright, paletteGlow, 0.6);
+    background += starTint * 0.9 * stars;
+    background += mix(paletteMid, paletteGlow, 0.75) * 0.5 * denseStars;
+    background += mix(paletteShadow, paletteBright, 0.4) * 0.35 * sparkling;
+
+    float galacticPlane = exp(-pow(centered.y * 2.8, 2.2));
+    float planeDrift = 0.35 + 0.65 * sin(loopAngle * 2.2 + centered.x * 6.0);
+    vec3 planeColor = mix(paletteMid, paletteGlow, 0.55);
+    background += planeColor * galacticPlane * planeDrift * 0.18;
+
+    float nebulaField = fbm(uv * 18.0 + orbitA * 1.4) * fbm(rotate(uv, 0.32) * 12.0 - orbitB * 1.1);
+    float nebulaMask = smoothstep(0.55, 0.92, nebulaField);
+    vec3 nebulaColor = mix(paletteMid, paletteGlow, 0.8);
+    background += nebulaColor * nebulaMask * 0.35;
 
     vec2 warped = mix(uv, lensWarp(uv, 0.06 + 0.04 * u_warp), 0.35);
     vec2 swirled = swirl(warped, 0.12 + u_warp * 0.3);
@@ -148,25 +164,35 @@ void main() {
     float angle = polar.y;
     float viewBias = saturate(0.5 + 0.45 * sin(angle + 0.5));
 
+    float holeMask = smoothstep(0.08, 0.2, r);
+    background *= holeMask;
+
     float photonMask = ringMask(r, 0.21, 0.29, 0.012);
     float photonFlicker = 0.75 + 0.25 * sin(loopAngle * 3.0 + angle * 2.2) + 0.12 * sin(loopAngle * 5.0);
     vec3 photonRing = paletteGlow * 2.2 * photonMask * photonFlicker * mix(0.7, 1.9, viewBias);
 
-    float diskBand = smoothstep(0.22, 0.3, r) * (1.0 - smoothstep(0.3, 0.95, r));
-    float diskFlow = 0.6 + 0.4 * sin(angle - loopAngle * 0.8);
-    float diskRumple = fbm(vec2(r * 22.0, angle * 5.2) + orbitA * 2.1);
-    float diskSpiral = fbm(vec2(r * 15.0, angle * 7.5) + orbitB * 1.7);
-    float diskFilament = pow(saturate(0.5 + 0.5 * sin(angle * 12.0 + r * 19.0 - loopAngle * 2.6)), 2.2);
-    float diskShock = smoothstep(0.18, 0.24, r) * (0.6 + 0.4 * sin(angle * 5.0 + loopAngle * 3.0));
-    float diskEnergy = diskBand * mix(diskFlow, diskSpiral, 0.52);
-    diskEnergy = pow(abs(diskEnergy), 1.05);
-    diskEnergy *= speedInfluence * (0.85 + 0.45 * diskFilament + 0.3 * diskShock);
-    vec3 diskBase = mix(paletteMid, paletteBright, clamp(diskEnergy * 1.4, 0.0, 1.0));
-    vec3 diskColor = mix(diskBase, paletteGlow * 1.2, pow(viewBias, 1.3));
-    vec3 disk = diskColor * diskEnergy * 1.7;
+    float diskBand = smoothstep(0.2, 0.26, r) * (1.0 - smoothstep(0.275, 0.78, r));
+    float diskFlow = 0.62 + 0.38 * sin(angle - loopAngle * 1.15);
+    float diskRumple = fbm(vec2(r * 28.0, angle * 6.4) + orbitA * 2.6);
+    float diskSpiral = fbm(vec2(r * 18.0, angle * 10.0) + orbitB * 2.4);
+    float diskFilament = pow(saturate(0.54 + 0.46 * sin(angle * 12.0 + r * 28.0 - loopAngle * 5.6)), 2.55);
+    float diskShock = smoothstep(0.18, 0.23, r) * (0.6 + 0.4 * sin(angle * 6.0 + loopAngle * 4.6));
+    float shearNoise = fbm(vec2(r * 58.0, angle * 34.0) + orbitA * 5.4);
+    float filamentNoise = fbm(vec2(r * 92.0, angle * 42.0) + orbitB * 7.6);
+    float caustic = pow(saturate(0.48 + 0.52 * sin(angle * 34.0 - loopAngle * 7.4)), 2.8);
+    float microCaustic = fbm(vec2(r * 140.0, angle * 70.0) + orbitC * 9.2);
+    float diskEnergy = diskBand * mix(diskFlow, diskSpiral, 0.55);
+    diskEnergy = pow(abs(diskEnergy), 1.08);
+    diskEnergy *= speedInfluence * (0.88 + 0.48 * diskFilament + 0.32 * diskShock);
+    diskEnergy *= 1.0 + diskRumple * 0.32 + shearNoise * 0.65 + filamentNoise * 0.5 + caustic * 0.8 + microCaustic * 0.25;
+    diskEnergy *= mix(1.0, 1.35, viewBias);
+    vec3 diskBase = mix(paletteMid, paletteBright, clamp(diskEnergy * 1.7, 0.0, 1.0));
+    vec3 diskHighlights = mix(paletteBright, paletteGlow, clamp(0.5 + caustic * 0.5 + microCaustic * 0.35, 0.0, 1.0));
+    vec3 diskColor = mix(diskBase, diskHighlights, clamp(diskEnergy, 0.0, 1.0));
+    vec3 disk = diskColor * diskEnergy * 2.0;
 
-    float haloMask = smoothstep(0.2, 0.5, r) * (1.0 - smoothstep(0.5, 0.85, r));
-    vec3 halo = mix(paletteShadow, paletteBright, 0.3) * haloMask * mix(0.6, 1.2, viewBias);
+    float haloMask = smoothstep(0.26, 0.36, r) * (1.0 - smoothstep(0.4, 0.68, r));
+    vec3 halo = mix(paletteShadow, paletteMid, 0.12) * haloMask * 0.14;
 
     float jetAngular = pow(abs(sin(angle)), 6.0);
     float jetCore = smoothstep(0.18, 0.35, r) * (1.0 - smoothstep(0.38, 0.95, r));
