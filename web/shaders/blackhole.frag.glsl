@@ -162,14 +162,15 @@ void main() {
     vec2 polar = tiltedPolar(swirled);
     float r = polar.x;
     float angle = polar.y;
-    float viewBias = saturate(0.5 + 0.45 * sin(angle + 0.5));
+    float viewTilt = sin(angle + 0.35);
+    float jetBias = saturate(0.6 + 0.4 * viewTilt);
 
     float holeMask = smoothstep(0.08, 0.2, r);
     background *= holeMask;
 
     float photonMask = ringMask(r, 0.21, 0.29, 0.012);
     float photonFlicker = 0.75 + 0.25 * sin(loopAngle * 3.0 + angle * 2.2) + 0.12 * sin(loopAngle * 5.0);
-    vec3 photonRing = paletteGlow * 2.2 * photonMask * photonFlicker * mix(0.7, 1.9, viewBias);
+    vec3 photonRing = paletteGlow * 2.2 * photonMask * photonFlicker * mix(1.05, 1.45, jetBias);
 
     float diskBand = smoothstep(0.2, 0.26, r) * (1.0 - smoothstep(0.275, 0.78, r));
     float diskFlow = 0.62 + 0.38 * sin(angle - loopAngle * 1.15);
@@ -185,11 +186,11 @@ void main() {
     diskEnergy = pow(abs(diskEnergy), 1.08);
     diskEnergy *= speedInfluence * (0.88 + 0.48 * diskFilament + 0.32 * diskShock);
     diskEnergy *= 1.0 + diskRumple * 0.32 + shearNoise * 0.65 + filamentNoise * 0.5 + caustic * 0.8 + microCaustic * 0.25;
-    diskEnergy *= mix(1.0, 1.35, viewBias);
+    diskEnergy *= 1.0;
     vec3 diskBase = mix(paletteMid, paletteBright, clamp(diskEnergy * 1.7, 0.0, 1.0));
-    vec3 diskHighlights = mix(paletteBright, paletteGlow, clamp(0.5 + caustic * 0.5 + microCaustic * 0.35, 0.0, 1.0));
+    vec3 diskHighlights = mix(paletteBright, paletteGlow, clamp(0.45 + caustic * 0.5 + microCaustic * 0.35, 0.0, 1.0));
     vec3 diskColor = mix(diskBase, diskHighlights, clamp(diskEnergy, 0.0, 1.0));
-    vec3 disk = diskColor * diskEnergy * 2.0;
+    vec3 disk = diskColor * diskEnergy * 1.8;
 
     float haloMask = smoothstep(0.26, 0.36, r) * (1.0 - smoothstep(0.4, 0.68, r));
     vec3 halo = mix(paletteShadow, paletteMid, 0.12) * haloMask * 0.14;
@@ -199,7 +200,7 @@ void main() {
     float jetNoise = fbm(vec2(angle * 8.5, r * 13.0) + orbitC * 1.9);
     float jetPulse = 0.6 + 0.4 * sin(loopAngle * 4.0 + angle * 4.5);
     vec3 jetColor = mix(paletteMid, paletteGlow, 0.6);
-    vec3 jets = jetColor * jetAngular * jetCore * (0.35 + 0.65 * jetNoise) * jetPulse * u_jetIntensity * mix(0.35, 0.95, viewBias);
+    vec3 jets = jetColor * jetAngular * jetCore * (0.35 + 0.65 * jetNoise) * jetPulse * u_jetIntensity * mix(0.4, 0.9, jetBias);
 
     vec3 innerGlow = mix(paletteShadow, paletteMid, 0.5) * smoothstep(0.2, 0.26, r) * (1.0 - smoothstep(0.28, 0.36, r));
 

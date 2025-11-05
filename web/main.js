@@ -16,37 +16,34 @@ async function loadShader(path) {
   return response.text();
 }
 
-function loadTexture(loader, path) {
-  return new Promise((resolve, reject) => {
-    loader.load(path, resolve, undefined, reject);
-  });
-}
-
 function createFallbackPalette() {
   const data = new Uint8Array([
-    5, 3, 12,
-    12, 6, 20,
-    42, 20, 70,
-    160, 120, 200,
+    5, 3, 12, 255,
+    12, 6, 20, 255,
+    42, 20, 70, 255,
+    160, 120, 200, 255,
   ]);
-  const texture = new THREE.DataTexture(data, 2, 2, THREE.RGBFormat);
+  const texture = new THREE.DataTexture(data, 2, 2, THREE.RGBAFormat);
   texture.needsUpdate = true;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  if (THREE.SRGBColorSpace) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+  }
   return texture;
 }
 
-function createCombinedPalette(textures) {
-  if (textures.length === 0) {
+function createCombinedPalette(sources) {
+  if (sources.length === 0) {
     return null;
   }
 
   const width = 256;
-  const height = 1;
+  const sampleHeight = 256;
   const canvas = document.createElement("canvas");
   canvas.width = width;
-  canvas.height = height;
+  canvas.height = sampleHeight;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) {
     return null;
@@ -55,50 +52,120 @@ function createCombinedPalette(textures) {
 
   const accum = new Float32Array(width * 3);
   let usableCount = 0;
+  const sampleStart = Math.floor(sampleHeight * 0.32);
+  const sampleEnd = Math.ceil(sampleHeight * 0.68);
+  const sampleRows = Math.max(1, sampleEnd - sampleStart);
+  const invRows = 1 / sampleRows;
 
-  textures.forEach((texture) => {
-    const image = texture.image;
-    if (!image) {
-      return;
-    }
-
+  sources.forEach((source) => {
     try {
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(image, 0, 0, width, height);
-      const imageData = ctx.getImageData(0, 0, width, height);
+      ctx.clearRect(0, 0, width, sampleHeight);
+      ctx.drawImage(source, 0, 0, width, sampleHeight);
+      const imageData = ctx.getImageData(0, 0, width, sampleHeight);
       const data = imageData.data;
-      for (let i = 0; i < width; i += 1) {
-        const idx = i * 4;
-        accum[i * 3 + 0] += data[idx + 0] / 255;
-        accum[i * 3 + 1] += data[idx + 1] / 255;
-        accum[i * 3 + 2] += data[idx + 2] / 255;
+      for (let x = 0; x < width; x += 1) {
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let y = sampleStart; y < sampleEnd; y += 1) {
+          const idx = (y * width + x) * 4;
+          r += data[idx + 0];
+          g += data[idx + 1];
+          b += data[idx + 2];
+        }
+        accum[x * 3 + 0] += (r * invRows) / 255;
+        accum[x * 3 + 1] += (g * invRows) / 255;
+        accum[x * 3 + 2] += (b * invRows) / 255;
       }
       usableCount += 1;
     } catch (error) {
-      console.warn("Unable to read palette texture", error);
+      console.warn("Unable to read palette image", error);
     }
   });
 
   if (usableCount === 0) {
+    console.warn("Combined palette fallback: no readable sources");
     return null;
   }
 
-  const output = new Uint8Array(width * 3);
+  console.info(`Combined palette using ${usableCount} references`);
+
+  const averaged = new Float32Array(width * 3);
+  let brightness = 0;
   for (let i = 0; i < width; i += 1) {
     const r = accum[i * 3 + 0] / usableCount;
     const g = accum[i * 3 + 1] / usableCount;
     const b = accum[i * 3 + 2] / usableCount;
-    output[i * 3 + 0] = Math.max(0, Math.min(255, Math.round(r * 255)));
-    output[i * 3 + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
-    output[i * 3 + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+    averaged[i * 3 + 0] = r;
+    averaged[i * 3 + 1] = g;
+    averaged[i * 3 + 2] = b;
+    brightness += (r + g + b) / 3;
+  }
+  brightness /= width;
+
+  const targetBrightness = 0.12;
+  let scale = 1.0;
+  if (brightness > 1e-4) {
+    scale = THREE.MathUtils.clamp(targetBrightness / brightness, 0.75, 4.5);
+  } else {
+    scale = 2.5;
   }
 
-  const dataTexture = new THREE.DataTexture(output, width, 1, THREE.RGBFormat);
+  const output = new Uint8Array(width * 4);
+  for (let i = 0; i < width; i += 1) {
+    const r = Math.min(1, averaged[i * 3 + 0] * scale);
+    const g = Math.min(1, averaged[i * 3 + 1] * scale);
+    const b = Math.min(1, averaged[i * 3 + 2] * scale);
+    output[i * 4 + 0] = Math.max(0, Math.min(255, Math.round(r * 255)));
+    output[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+    output[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+    output[i * 4 + 3] = 255;
+  }
+
+  const dataTexture = new THREE.DataTexture(output, width, 1, THREE.RGBAFormat);
   dataTexture.needsUpdate = true;
   dataTexture.minFilter = THREE.LinearFilter;
   dataTexture.magFilter = THREE.LinearFilter;
   dataTexture.wrapS = dataTexture.wrapT = THREE.ClampToEdgeWrapping;
+  if (THREE.SRGBColorSpace) {
+    dataTexture.colorSpace = THREE.SRGBColorSpace;
+  }
   return dataTexture;
+}
+
+async function loadImageSource(path) {
+  const response = await fetch(path);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} for ${path}`);
+  }
+
+  const blob = await response.blob();
+
+  if ("createImageBitmap" in window) {
+    const bitmap = await createImageBitmap(blob);
+    const cleanup = () => {
+      if (bitmap.close) {
+        bitmap.close();
+      }
+    };
+    return { source: bitmap, cleanup };
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+
+  const source = await new Promise((resolve, reject) => {
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image ${path}`));
+    img.src = objectUrl;
+  });
+
+  const cleanup = () => {
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  return { source, cleanup };
 }
 
 async function init() {
@@ -106,8 +173,6 @@ async function init() {
     loadShader("shaders/fullscreen.vert.glsl"),
     loadShader("shaders/blackhole.frag.glsl"),
   ]);
-
-  const textureLoader = new THREE.TextureLoader();
 
   const textureCandidates = [
     "assets/textures/blackhole_reference.jpg",
@@ -120,36 +185,23 @@ async function init() {
     "assets/textures/Screenshot 2025-11-04 192405.png",
   ];
 
-  const loadedTextures = [];
+  const imageSources = [];
   for (const path of textureCandidates) {
     try {
-      const texture = await loadTexture(textureLoader, path);
-      texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.minFilter = THREE.LinearFilter;
-      loadedTextures.push(texture);
-      console.info(`Loaded palette texture from ${path}`);
+      const { source, cleanup } = await loadImageSource(path);
+      imageSources.push({ source, cleanup, path });
+      console.info(`Loaded reference image from ${path}`);
     } catch (error) {
       console.warn(`Unable to load ${path}`, error);
     }
   }
 
-  if (loadedTextures.length === 0) {
-    console.warn("No reference textures available; using fallback palette");
-    const data = new Uint8Array([
-      5, 3, 12,
-      12, 6, 20,
-      42, 20, 70,
-      160, 120, 200,
-    ]);
-    const fallback = new THREE.DataTexture(data, 2, 2, THREE.RGBFormat);
-    fallback.needsUpdate = true;
-    loadedTextures.push(fallback);
-  }
-
-  let combinedPalette = createCombinedPalette(loadedTextures);
-  if (!combinedPalette) {
-    combinedPalette = createFallbackPalette();
-  }
+  const combinedPalette = createCombinedPalette(imageSources.map((entry) => entry.source)) || createFallbackPalette();
+  imageSources.forEach((entry) => {
+    if (entry.cleanup) {
+      entry.cleanup();
+    }
+  });
 
   const uniforms = {
     u_time: { value: 0 },
