@@ -2,8 +2,9 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161/build/three.mod
 
 const canvas = document.getElementById("blackhole-canvas");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+// Fixed 1080p resolution for 60fps rendering
+renderer.setPixelRatio(1);
+renderer.setSize(1920, 1080);
 
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
@@ -206,7 +207,8 @@ async function init() {
   const uniforms = {
     u_time: { value: 0 },
     u_cycle: { value: 0 },
-    u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    u_elapsed: { value: 0 }, // Continuous time for seamless rotation
+    u_resolution: { value: new THREE.Vector2(1920, 1080) },
     u_baseTexture: { value: combinedPalette },
     u_acceleration: { value: 1.2 },
     u_warp: { value: 0.85 },
@@ -224,17 +226,10 @@ async function init() {
   const mesh = new THREE.Mesh(geometry, material);
   scene.add(mesh);
 
-  function onResize() {
-    const { innerWidth, innerHeight } = window;
-    renderer.setSize(innerWidth, innerHeight);
-    uniforms.u_resolution.value.set(innerWidth, innerHeight);
-  }
-
-  window.addEventListener("resize", onResize);
+  // Fixed 1080p - no resize handler needed
 
   const LOOP_DURATION = 13.5; // faster seamless cycle for default state
   const clock = new THREE.Clock();
-
   function animate() {
     const elapsed = clock.getElapsedTime();
     const speed = uniforms.u_acceleration.value;
@@ -243,6 +238,7 @@ async function init() {
     const phase = looped / LOOP_DURATION;
     uniforms.u_cycle.value = phase;
     uniforms.u_time.value = phase * Math.PI * 2.0;
+    uniforms.u_elapsed.value = adjusted; // Continuous time for seamless infinite rotation
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);

@@ -4,6 +4,7 @@ uniform sampler2D u_baseTexture;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_cycle;
+uniform float u_elapsed; // Continuous time for seamless rotation
 uniform float u_acceleration;
 uniform float u_warp;
 uniform float u_jetIntensity;
@@ -67,15 +68,24 @@ float noise(vec2 uv) {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Optimized fbm - reduced from 6 to 3 octaves for performance
 float fbm(vec2 uv) {
     float value = 0.0;
     float amplitude = 0.55;
     float frequency = 1.6;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 3; ++i) {
         value += amplitude * noise(uv * frequency);
         frequency *= 2.02;
         amplitude *= 0.46;
     }
+    return value;
+}
+
+// Fast fbm with only 2 octaves for background elements
+float fbmFast(vec2 uv) {
+    float value = 0.0;
+    value += 0.55 * noise(uv * 1.6);
+    value += 0.25 * noise(uv * 3.23);
     return value;
 }
 
@@ -105,56 +115,40 @@ float starFieldEnhanced(vec2 uv, float cycle, float density, float sizeVariation
     return star * twinkle;
 }
 
-// Distant galaxy
+// Optimized distant galaxy - much simpler
 float distantGalaxy(vec2 uv, vec2 position, float rotation, float size, float seed) {
     vec2 p = uv - position;
     p = rotate(p, rotation);
-    
-    // Elliptical shape
-    p.y *= 0.4 + hash(vec2(seed, seed + 1.0)) * 0.3;
+    p.y *= 0.4;
     float dist = length(p) / size;
     
-    // Galaxy core
+    // Just core and simple disk, no spiral arms
     float core = exp(-dist * 12.0);
+    float disk = exp(-dist * 4.5) * 0.3;
     
-    // Spiral arms (for spiral galaxies)
-    float angle = atan(p.y, p.x);
-    float spiral1 = fbm(vec2(dist * 8.0 + angle * 0.8, angle * 3.0)) * 0.6;
-    float spiral2 = fbm(vec2(dist * 8.0 - angle * 0.8, -angle * 3.0)) * 0.6;
-    
-    // Galaxy disk
-    float disk = exp(-dist * 4.5) * (1.0 + spiral1 + spiral2) * 0.3;
-    
-    // Combine
     float galaxy = core * 0.8 + disk;
     galaxy *= smoothstep(1.5, 0.0, dist);
     
     return saturate(galaxy);
 }
 
-// Milky Way-style nebula clouds
+// Optimized nebula - use fbmFast instead of fbm
 float nebulaCloud(vec2 uv, vec2 offset, float scale) {
     vec2 p = uv * scale + offset;
-    float cloud = fbm(p * 2.5) * 0.6;
-    cloud += fbm(p * 5.0) * 0.3;
-    cloud += fbm(p * 10.0) * 0.1;
+    float cloud = fbmFast(p * 2.5);
     return pow(saturate(cloud), 1.8);
 }
 
-// Dust lanes for galaxy background
+// Optimized dust lanes
 float dustLanes(vec2 uv, vec2 offset) {
     vec2 p = uv + offset;
-    float dust = fbm(vec2(p.x * 15.0, p.y * 3.0)) * 0.7;
-    dust += fbm(vec2(p.x * 8.0, p.y * 6.0)) * 0.3;
-    return saturate(dust);
+    return saturate(fbmFast(vec2(p.x * 15.0, p.y * 3.0)));
 }
 
-// Wispy filaments
+// Optimized filaments
 float filamentStructure(vec2 uv, vec2 offset, float angle) {
     vec2 p = rotate(uv + offset, angle);
-    float filament = fbm(vec2(p.x * 25.0, p.y * 4.0)) * 0.6;
-    filament += fbm(vec2(p.x * 50.0, p.y * 8.0)) * 0.4;
-    return pow(saturate(filament), 3.0);
+    return pow(saturate(fbmFast(vec2(p.x * 25.0, p.y * 4.0))), 3.0);
 }
 
 float ringMask(float radius, float inner, float outer, float softness) {
@@ -236,189 +230,206 @@ void main() {
     
     background += galaxyColor1;
     
-    // ========== MINIMAL STAR FIELD ==========
+    // ========== STATIC STAR BACKGROUND (NO MOVEMENT) ==========
     
-    // Just one sparse layer of stars
-    float stars = starFieldEnhanced(uv + orbitA * 0.008, cycle, 400.0, 0.5, 1.0);
-    vec3 starTint = mix(vec3(0.9, 0.95, 1.0), vec3(1.0, 1.0, 1.0), 0.7);
+    // Dense static starfield - looks like deep space
+    vec2 starGrid1 = uv * 300.0;
+    vec2 starCell1 = floor(starGrid1);
+    float starRnd1 = hash(starCell1);
+    float star1 = step(0.99, starRnd1) * saturate(1.0 - length(fract(starGrid1) - 0.5) * 8.0);
     
-    background += starTint * stars * 0.25;
+    // Second layer at different scale for depth
+    vec2 starGrid2 = uv * 450.0;
+    vec2 starCell2 = floor(starGrid2);
+    float starRnd2 = hash(starCell2);
+    float star2 = step(0.995, starRnd2) * saturate(1.0 - length(fract(starGrid2) - 0.5) * 10.0);
     
-    // ========== NO COMETS OR SHOOTING STARS ==========
-    // (Removed to fix bugs and reduce clutter)
+    // Subtle twinkling (very slow, based on position not time)
+    float twinkle1 = 0.6 + 0.4 * sin(starRnd1 * 100.0);
+    float twinkle2 = 0.7 + 0.3 * sin(starRnd2 * 100.0);
+    // Add stars to background (brighter and more varied)
+    background += vec3(0.95, 1.0, 1.1) * star1 * twinkle1 * 2.1;
+    background += vec3(1.1, 0.98, 0.9) * star2 * twinkle2 * 1.8;
     
-    // Very subtle filaments
-    float filament1 = filamentStructure(uv, vec2(0.2, -0.1), 0.4);
-    vec3 filamentColor = paletteShadow * 0.5 * filament1 * 0.012;
-    
-    background += filamentColor;
+    // Add third layer for even more star density
+    vec2 starGrid3 = uv * 600.0;
+    vec2 starCell3 = floor(starGrid3);
+    float starRnd3 = hash(starCell3);
+    float star3 = step(0.997, starRnd3) * saturate(1.0 - length(fract(starGrid3) - 0.5) * 12.0);
+    float twinkle3 = 0.65 + 0.35 * sin(starRnd3 * 100.0);
+    background += vec3(1.1, 1.04, 1.0) * star3 * twinkle3 * 1.6;
 
-    // ========== GRAVITATIONAL LENSING & WARPING ==========
+    // Fourth sparse, bright stars
+    vec2 starGrid4 = uv * 850.0;
+    vec2 starCell4 = floor(starGrid4);
+    float starRnd4 = hash(starCell4);
+    float star4 = step(0.9985, starRnd4) * saturate(1.0 - length(fract(starGrid4) - 0.5) * 14.0);
+    float twinkle4 = 0.7 + 0.3 * sin(starRnd4 * 120.0);
+    background += vec3(1.2, 1.05, 0.95) * star4 * twinkle4 * 2.2;
     
+    // Very faint Milky Way glow (static)
+    float milkyWay = nebulaCloud(uv, vec2(0.0, 0.0), 1.5) * 0.03;
+    background += paletteMid * milkyWay;
+
+    // Subtle inflow fog being pulled toward the disk
+    float inflowRadius = length(centered);
+    float inflowMask = smoothstep(0.78, 1.3, inflowRadius) * (1.0 - smoothstep(1.3, 1.62, inflowRadius));
+    float inflowAngle = atan(centered.y, centered.x);
+    float inflowPhase = cycle * TAU;
+    float inflowSpiral = fbm(vec2(inflowRadius * 2.8 - inflowPhase * 1.8, inflowAngle * 3.6));
+    float inflowFine = fbmFast(vec2(inflowRadius * 22.0, inflowAngle * 10.0 - inflowPhase * 1.8));
+    float inflowShear = 0.6 + 0.4 * sin(inflowAngle * 2.8 - inflowPhase * 1.5);
+    float inflowCurl = 0.5 + 0.5 * fbmFast(vec2(centered * 7.5 - inflowPhase));
+    float inflowIntensity = inflowMask * (0.08 + 0.38 * inflowSpiral + 0.22 * inflowFine) * inflowShear * inflowCurl;
+    vec3 inflowColor = mix(paletteShadow, paletteMid, 0.38);
+    background += inflowColor * inflowIntensity * 0.3;
+
     vec2 warped = mix(uv, lensWarp(uv, 0.06 + 0.04 * u_warp), 0.35);
     vec2 swirled = swirl(warped, 0.12 + u_warp * 0.3);
     vec2 polar = tiltedPolar(swirled);
     float r = polar.x;
-    float angle = polar.y;
+    float baseAngle = polar.y;
+    float angle = baseAngle;
+
+    // CINEMATIC: Continuous counter-clockwise rotation using elapsed time (no loop reset)
+    float diskRotation = u_elapsed * 0.15; // Uses continuous time for seamless infinite rotation
+    angle -= diskRotation; // Negative for counter-clockwise
+
     float viewTilt = sin(angle + 0.35);
     float jetBias = saturate(0.6 + 0.4 * viewTilt);
 
-    // Black hole shadow mask
-    float holeMask = smoothstep(0.08, 0.2, r);
+    // Black hole shadow with realistic gravitational lensing detail
+    float holeMask = smoothstep(0.12, 0.28, r);
+    
+    // Enhanced event horizon with photon sphere lensing effects
+    float horizonDetail = fbm(vec2(angle * 12.0, r * 55.0));
+    float horizonMicroDetail = fbmFast(vec2(angle * 26.0, r * 92.0));
+    
+    // Create subtle lensing distortion ring
+    float lensingRing = smoothstep(0.24, 0.26, r) * (1.0 - smoothstep(0.27, 0.3, r));
+    lensingRing *= 0.7 + 0.3 * horizonDetail;
+    
+    // Photon sphere shadow (where light barely escapes)
+    float photonShadow = smoothstep(0.25, 0.28, r) * (1.0 - smoothstep(0.29, 0.33, r));
+    photonShadow *= 0.5 + 0.3 * horizonDetail + 0.2 * horizonMicroDetail;
+    
+    background *= (1.0 - lensingRing * 0.25);
+    background *= (1.0 - photonShadow * 0.35);
     background *= holeMask;
 
-    // ========== PHOTON SPHERE & EINSTEIN RING ==========
+    // ========== PHOTON SPHERE (EINSTEIN RING) ==========
     
-    float photonMask = ringMask(r, 0.21, 0.29, 0.012);
+    float photonMask = ringMask(r, 0.26, 0.36, 0.015);
     
-    // Enhanced photon sphere with orbital variations
-    float photonFlicker = 0.8 + 0.15 * fbm(vec2(angle * 3.2, loopAngle * 2.8));
-    photonFlicker += 0.05 * fbm(vec2(angle * 8.5, loopAngle * 5.1));
-    photonFlicker += 0.03 * fbm(vec2(angle * 16.0, loopAngle * 7.3));
+    // CINEMATIC: More realistic photon ring with turbulence and beaming
+    float photonTurbulence = fbm(vec2(angle * 8.0, r * 60.0));
+    float photonDetail = fbmFast(vec2(angle * 20.0, r * 100.0));
+    float photonBrightness = 1.0 + 0.3 * photonTurbulence + 0.15 * photonDetail;
+    photonBrightness *= 0.85 + 0.15 * sin(angle * 4.0); // Slight asymmetry from viewing angle
+    float photonApproach = saturate(0.5 + 0.5 * cos(angle));
+    float photonBeaming = mix(0.7, 1.5, photonApproach);
     
-    // Gravitational lensing caustics
-    float causticDetail = fbm(vec2(angle * 12.0, r * 80.0) + orbitA * 3.5);
-    photonFlicker *= 1.0 + causticDetail * 0.2;
+    vec3 photonRing = paletteGlow * 2.6 * photonMask * photonBrightness * photonBeaming * mix(1.0, 1.4, jetBias);
     
-    vec3 photonRing = paletteGlow * 2.2 * photonMask * photonFlicker * mix(1.0, 1.35, jetBias);
-
-    // ========== ENHANCED ACCRETION DISK ==========
+    // ========== CINEMATIC ACCRETION DISK ==========
     
-    // Realistic asymmetric disk structure
-    float angularAsymmetry = fbm(vec2(angle * 2.5, loopAngle * 0.6)) * 0.08;
-    float radialLumpiness = fbm(vec2(angle * 4.0, r * 15.0) + orbitA * 1.8) * 0.06;
-    float clumpiness = fbm(vec2(angle * 6.5, r * 22.0) + orbitB * 2.2) * 0.05;
+    // Clean disk boundaries with more realistic falloff
+    float diskBand = smoothstep(0.26, 0.36, r) * (1.0 - smoothstep(0.4, 0.82, r));
+    float diskEdgeDetail = fbmFast(vec2(angle * 8.0, r * 30.0));
+    diskBand *= 0.88 + 0.12 * diskEdgeDetail;
     
-    // Irregular disk boundaries (realistic)
-    float innerBoundary = 0.26 + angularAsymmetry * 0.5 + radialLumpiness * 0.3;
-    float outerBoundary = 0.78 + clumpiness * 0.6 + angularAsymmetry * 0.4;
-    float diskBand = smoothstep(0.2, innerBoundary, r) * (1.0 - smoothstep(0.275, outerBoundary, r));
+    // CINEMATIC: Doppler - recalculate with NEW angle (includes rotation)
+    float approach = saturate(0.5 + 0.5 * cos(angle));
+    float dopplerShift = mix(0.55, 1.7, approach); // Strong cinematic contrast
     
-    // Realistic disk gaps and inhomogeneities
-    float diskGaps = fbm(vec2(angle * 8.0, r * 35.0) + orbitC * 2.5);
-    diskBand *= 0.7 + 0.3 * diskGaps;
+    // Multi-scale turbulence for realistic disk structure
+    float spiralLarge = fbm(vec2(r * 11.0, angle * 6.0));
+    float spiralMedium = fbm(vec2(r * 24.0, angle * 11.0));
+    float detailFine = fbmFast(vec2(r * 48.0, angle * 19.0));
+    float detailUltra = fbmFast(vec2(r * 65.0, angle * 28.0));
     
-    // Relativistic Doppler boosting (approaching side much brighter and bluer)
-    float dopplerPhase = angle - loopAngle * 1.1;
-    float approach = saturate(0.5 + 0.5 * cos(dopplerPhase));
-    float dopplerShift = mix(0.7, 1.4, approach);
-
-    // Multi-scale turbulent cascade (from large to small scale)
-    float turbulence1 = fbm(vec2(r * 25.0, angle * 8.0) + orbitA * 2.8);
-    float turbulence2 = fbm(vec2(r * 45.0, angle * 12.0) + orbitB * 3.2);
-    float turbulence3 = fbm(vec2(r * 85.0, angle * 18.0) + orbitC * 4.1);
-    float turbulence4 = fbm(vec2(r * 130.0, angle * 25.0) - orbitA * 5.3);
-    float turbulence5 = fbm(vec2(r * 180.0, angle * 32.0) + orbitB * 6.7);
-
-    // Additional fine detail layers
-    float vortexDetail = fbm(vec2(angle * 9.0 - loopAngle * 0.8, r * 50.0));
-    float shearDetail = fbm(vec2(angle * 18.0, r * 85.0) + orbitC * 3.4);
-    float sparkDetail = pow(fbm(vec2(angle * 22.0, r * 140.0) + orbitB * 5.6), 4.0);
-
-    // Magnetic field structure (creates spiral patterns)
-    float magneticField = fbm(vec2(angle * 4.5 + loopAngle * 0.8, r * 35.0)) * 0.3;
-
-    // Gravitational redshift (dimmer near event horizon due to time dilation)
-    float redshift = smoothstep(0.18, 0.36, r);
-
-    // Temperature variations (hotter inner disk, cooler outer regions)
-    float tempVariation = fbm(vec2(r * 60.0, angle * 15.0) + orbitB * 2.5);
-    float innerTemp = smoothstep(0.5, 0.24, r);
-
-    // Differential rotation (Keplerian velocity profile)
-    float rotationSpeed = 1.0 / sqrt(r + 0.1);
-    float diskFlow = fbm(vec2(angle * 6.0 - loopAngle * 1.1 * rotationSpeed, r * 20.0));
-    float diskSpiral = fbm(vec2(r * 18.0, angle * 10.0) + orbitB * 2.4);
-
-    // Shock fronts and reconnection flares
-    float shockFront = pow(fbm(vec2(angle * 15.0 + loopAngle * 2.0, r * 40.0)), 3.2) * 0.35;
-    float reconnection = pow(fbm(vec2(angle * 12.0, r * 60.0) + orbitC * 4.9), 4.0) * 0.45;
-
-    // Combine all disk physics
-    float diskEnergy = diskBand * mix(diskFlow, diskSpiral, 0.42);
-    diskEnergy = pow(abs(diskEnergy), 0.78);
+    // Combine scales for realistic turbulent structure
+    float diskStructure = spiralLarge * 0.42 + spiralMedium * 0.28 + detailFine * 0.2 + detailUltra * 0.1;
+    
+    // Gravitational effects
+    float redshift = smoothstep(0.22, 0.42, r);
+    float innerHeat = smoothstep(0.58, 0.32, r);
+    
+    // Temperature-dependent disk features
+    float hotSpots = fbm(vec2(r * 38.0, angle * 15.0));
+    hotSpots = pow(saturate(hotSpots), 2.0) * innerHeat;
+    
+    // Energy calculation with more realistic physics
+    float diskEnergy = diskBand * (0.7 + diskStructure * 0.6);
     diskEnergy *= speedInfluence * dopplerShift * redshift;
-    diskEnergy *= 0.85 + turbulence1 * 0.45 + turbulence2 * 0.35 + turbulence3 * 0.25;
-    diskEnergy *= 1.0 + turbulence4 * 0.22 + turbulence5 * 0.18;
-    diskEnergy *= 1.0 + vortexDetail * 0.25 + shearDetail * 0.3;
-    diskEnergy *= 1.0 + magneticField * 0.32 + tempVariation * 0.28;
-    diskEnergy *= 1.0 + innerTemp * 0.5 + shockFront * 0.55 + reconnection * 0.6;
-    diskEnergy *= 1.45;
+    diskEnergy *= 1.0 + innerHeat * 0.8 + hotSpots * 0.5;
+    diskEnergy *= 1.6;
 
-    // Doppler color shift (warm toward viewer, cool away)
-    vec3 warmTint = vec3(1.25, 0.78, 0.55);
-    vec3 coolTint = vec3(0.65, 0.82, 1.2);
-    vec3 dopplerTint = mix(warmTint, coolTint, approach);
-
-    // Base disk color and highlights
-    vec3 diskBase = mix(paletteMid, paletteBright, clamp(diskEnergy * 1.5, 0.0, 1.0)) * dopplerTint;
-    vec3 diskHighlights = mix(paletteBright, paletteGlow, clamp(turbulence3 * 0.45 + vortexDetail * 0.35 + sparkDetail * 0.6, 0.0, 1.0));
-
-    // Hot inner rim (photon sphere spill light)
-    float innerRim = smoothstep(0.24, 0.27, r) * (1.0 - smoothstep(0.29, 0.33, r));
-    float rimPulse = innerRim * (1.0 + shearDetail * 0.6 + sparkDetail * 1.2);
-    vec3 rimColor = paletteGlow * mix(0.9, 1.6, approach) * rimPulse;
-
-    // Localized flares / hot spots
-    float hotspotMask = pow(fbm(vec2(angle * 14.0, r * 120.0) + orbitA * 4.7), 3.0);
-    vec3 hotSpots = paletteGlow * vec3(1.2, 0.95, 0.7) * hotspotMask * diskBand * (0.4 + approach * 0.6);
-
+    // Cinematic color tinting from Doppler with more contrast
+    vec3 warmTint = vec3(1.45, 0.85, 0.52);
+    vec3 coolTint = vec3(0.52, 0.68, 1.2);
+    vec3 dopplerTint = mix(coolTint, warmTint, approach);
+    
+    // Enhanced color mixing with hot spots
+    vec3 diskBase = mix(paletteMid, paletteBright, clamp(diskEnergy * 1.65, 0.0, 1.0)) * dopplerTint;
+    vec3 diskHighlights = mix(paletteBright, paletteGlow, clamp(detailFine * 0.75 + detailUltra * 0.25, 0.0, 1.0));
+    vec3 hotSpotColor = paletteGlow * 1.5 * hotSpots;
+    
+    // Bright inner rim with temperature gradient
+    float innerRim = smoothstep(0.3, 0.34, r) * (1.0 - smoothstep(0.35, 0.39, r));
+    float rimDetail = fbmFast(vec2(angle * 19.0, r * 62.0));
+    vec3 rimGlow = paletteGlow * innerRim * mix(1.0, 2.2, approach) * (1.2 + rimDetail * 0.4);
+    
     vec3 diskColor = mix(diskBase, diskHighlights, clamp(diskEnergy * 0.8, 0.0, 1.0));
-    vec3 disk = diskColor * diskEnergy * 1.95 + rimColor + hotSpots;
+    diskColor += hotSpotColor;
+    vec3 disk = diskColor * diskEnergy * 2.1 + rimGlow;
 
-    // ========== ENHANCED OUTER DISK STRUCTURES ==========
+    // ========== ENHANCED OUTER DISK ==========
     
-    // Turbulent outer disk with spiral density waves
-    float outerSwirlMask = smoothstep(0.32, 0.5, r) * (1.0 - smoothstep(0.55, 0.85, r));
-    float outerTurbulence = fbm(vec2(r * 22.0, angle * 5.5) + orbitB * 1.9);
-    float outerGlow = fbm(vec2(r * 35.0, angle * 8.0) + orbitC * 2.3);
-    float spiralWaves = fbm(vec2(r * 12.0, angle * 4.0 - loopAngle * 0.8));
-    
-    vec3 outerSwirl = mix(paletteShadow, paletteMid, 0.4) * outerSwirlMask;
-    outerSwirl *= (outerTurbulence * 0.45 + outerGlow * 0.35 + spiralWaves * 0.3) * 0.25;
+    float outerWarpSeed = fbmFast(vec2(baseAngle * 5.0, r * 14.0 - cycle * 3.2));
+    float outerWarp = 0.025 * (outerWarpSeed - 0.5);
+    float outerGlowMask = smoothstep(0.34 + outerWarp, 0.52 + outerWarp, r) * (1.0 - smoothstep(0.58 + outerWarp, 0.84 + outerWarp, r));
+    float outerDetail = fbmFast(vec2(baseAngle * 5.2, r * 18.0));
+    vec3 outerGlow = mix(paletteShadow, paletteMid, 0.32 + outerDetail * 0.12) * outerGlowMask * (0.18 + outerDetail * 0.05);
+    float outerClumps = fbm(vec2(baseAngle * 2.6 + cycle * 0.6, r * 11.0));
+    float outerUneven = smoothstep(0.2, 0.82, outerClumps + 0.22 * sin(baseAngle * 2.2 + cycle * TAU * 0.28));
+    vec3 outerClouds = mix(vec3(0.35, 0.42, 0.5), paletteMid, 0.45 + outerClumps * 0.25) * outerGlowMask * outerUneven * 0.22;
+    outerGlow += outerClouds;
 
-    // ========== EVENT HORIZON DETAIL ==========
+    // ========== ENHANCED HALO ==========
     
-    // Inner disk halo with gravitational time dilation effects
-    float haloMask = smoothstep(0.26, 0.34, r) * (1.0 - smoothstep(0.36, 0.5, r));
-    float haloDetail = fbm(vec2(r * 50.0, angle * 12.0) + orbitA * 3.1);
-    float haloFlicker = 0.9 + 0.1 * cos(loopAngle * 8.0 + angle * 6.0);
-    
-    vec3 halo = mix(paletteShadow, paletteMid, 0.25 + haloDetail * 0.35) * haloMask;
-    halo *= (0.2 + haloDetail * 0.15) * haloFlicker;
+    float haloMask = smoothstep(0.27, 0.32, r) * (1.0 - smoothstep(0.35, 0.45, r));
+    float haloDetail = fbmFast(vec2(baseAngle * 9.0 + cycle * 0.5, r * 35.0));
+    vec3 halo = mix(paletteShadow, paletteMid, 0.26 + haloDetail * 0.1) * haloMask * (0.16 + haloDetail * 0.05);
 
-    // ========== RELATIVISTIC JETS ==========
+    // ========== ENHANCED JETS ==========
     
-    // Polar jets with proper turbulent structure (dimmer)
     float jetAngular = pow(abs(sin(angle)), 6.5);
-    float jetCore = smoothstep(0.18, 0.35, r) * (1.0 - smoothstep(0.38, 0.95, r));
-    float jetNoise = fbm(vec2(angle * 8.5, r * 13.0) + orbitC * 1.9);
-    float jetTurbulence = fbm(vec2(angle * 15.0, r * 22.0) + orbitA * 2.7);
-    float jetInstability = fbm(vec2(angle * 25.0, r * 35.0) + orbitD * 3.8);
-    float jetPulse = 0.65 + 0.35 * cos(loopAngle * 3.5);
+    float jetCore = smoothstep(0.28, 0.48, r) * (1.0 - smoothstep(0.52, 0.98, r));
+    float jetDetail = fbmFast(vec2(angle * 8.0, r * 12.0));
+    float jetFine = fbmFast(vec2(angle * 16.0, r * 24.0));
+    float jetStructure = jetDetail * 0.7 + jetFine * 0.3;
+    float jetFocus = 1.0 + 0.35 * exp(-pow(abs(sin(angle)), 2.0) * 15.0);
     
-    // Jet magnetic collimation
-    float jetFocus = 1.0 + 0.3 * exp(-pow(abs(sin(angle)), 2.0) * 15.0);
-    
-    vec3 jetColor = mix(paletteMid, paletteGlow, 0.65);
-    vec3 jets = jetColor * jetAngular * jetCore * jetFocus;
-    jets *= (0.3 + 0.35 * jetNoise + 0.2 * jetTurbulence + 0.12 * jetInstability);
-    jets *= jetPulse * u_jetIntensity * mix(0.4, 0.85, jetBias);
+    vec3 jetColor = mix(paletteMid, paletteGlow, 0.7);
+    vec3 jets = jetColor * jetAngular * jetCore * jetFocus * (0.5 + 0.5 * jetStructure);
+    jets *= u_jetIntensity * mix(0.45, 0.9, jetBias);
+    float jetAxis = pow(saturate(1.0 - abs(sin(angle))), 12.0);
+    float plasmaBeam = jetAxis * smoothstep(0.32, 0.52, r) * (1.0 - smoothstep(0.56, 1.05, r));
+    plasmaBeam *= 0.9 + 0.3 * jetStructure;
+    vec3 plasmaColor = mix(vec3(0.7, 0.95, 1.45), paletteGlow, 0.55);
+    jets += plasmaColor * plasmaBeam * u_jetIntensity * 1.1;
 
-    // ========== INNERMOST STABLE CIRCULAR ORBIT (ISCO) GLOW ==========
+    // ========== ENHANCED INNER GLOW ==========
     
-    float innerGlowMask = smoothstep(0.2, 0.26, r) * (1.0 - smoothstep(0.28, 0.36, r));
-    float innerGlowDetail = fbm(vec2(r * 65.0, angle * 20.0) + orbitB * 3.5);
-    float innerShimmer = fbm(vec2(r * 120.0, angle * 35.0) + orbitC * 5.2);
-    float iscoEmission = 0.8 + 0.2 * cos(loopAngle * 6.0 + angle * 4.0);
-    
-    vec3 innerGlow = mix(paletteShadow, paletteMid, 0.45 + innerGlowDetail * 0.25) * innerGlowMask;
-    innerGlow *= (0.5 + innerGlowDetail * 0.28 + innerShimmer * 0.15) * iscoEmission;
+    float innerGlowMask = smoothstep(0.26, 0.34, r) * (1.0 - smoothstep(0.36, 0.44, r));
+    float innerDetail = fbmFast(vec2(angle * 16.0, r * 52.0));
+    vec3 innerGlow = mix(paletteShadow, paletteMid, 0.5 + innerDetail * 0.15) * innerGlowMask * (0.65 + innerDetail * 0.2);
 
-    float innerMask = smoothstep(0.16, 0.3, r);
-    float outerMask = 1.0 - smoothstep(0.82, 1.08, r);
+    float innerMask = smoothstep(0.22, 0.38, r);
+    float outerMask = 1.0 - smoothstep(0.84, 1.1, r);
 
-    vec3 emission = outerSwirl + halo + disk + photonRing + jets + innerGlow * 0.5;
+    vec3 emission = outerGlow + halo + disk + photonRing + jets + innerGlow * 0.5;
     emission *= innerMask * outerMask;
 
     vec3 color = background + emission;

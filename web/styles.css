@@ -3,10 +3,16 @@ html, body {
   height: 100%;
   background: #02030b;
   overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 #blackhole-canvas {
-  width: 100vw;
-  height: 100vh;
+  width: 1920px;
+  height: 1080px;
   display: block;
+  max-width: 100vw;
+  max-height: 100vh;
+  object-fit: contain;
 }
