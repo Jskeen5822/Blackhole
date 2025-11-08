@@ -13,7 +13,7 @@ camera.lookAt(0, 0, 0);
 renderer.setClearColor(0x02030b, 1);
 
 async function loadShader(path) {
-  const response = await fetch(path, { cache: "no-store" });
+  const response = await fetch(path);
   return response.text();
 }
 
@@ -172,10 +172,8 @@ async function loadImageSource(path) {
 async function init() {
   const [vertexShader, fragmentShader] = await Promise.all([
     loadShader("shaders/fullscreen.vert.glsl"),
-    loadShader("shaders/blackhole_cinematic.frag.glsl"),
+    loadShader("shaders/blackhole.frag.glsl"),
   ]);
-
-  console.info("Fragment shader snippet:", fragmentShader.slice(0, 160));
 
   const textureCandidates = [
     "assets/textures/blackhole_reference.jpg",
